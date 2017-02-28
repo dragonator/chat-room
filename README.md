@@ -1,3 +1,5 @@
+![alt text](https://abusix.files.wordpress.com/2010/12/under-construction.gif "Under Development")
+
 Chat Room
 =
 Simple C implementation of chat room using TCP/IP sockets (IPv4 and IPv6).
