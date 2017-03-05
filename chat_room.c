@@ -107,7 +107,7 @@ void strip_newline(char *s){
 }
 //=================
 
-/* Handle all communication with the client */
+// Handle client communication
 void* handle_client(void *args){
   char buffer_out[BUFFER_SIZE] = {0};
   char buffer_in[BUFFER_SIZE]  = {0};
@@ -133,7 +133,7 @@ void* handle_client(void *args){
   sprintf(buffer_out, "[SERVER] User %s joined the room\n", client->name);
   send_message_all(buffer_out);
 
-  /* Receive input from client */
+  // Receive input from client
   while((read_len = read(client->conn_fd, buffer_in, sizeof(buffer_in)-1)) > 0)
   {
     buffer_in[read_len] = '\0';
@@ -141,12 +141,12 @@ void* handle_client(void *args){
     // FIXME: Remove newline otherwise
     strip_newline(buffer_in);
 
-    /* Ignore empty buffer */
+    // Ignore empty buffer
     if(!strlen(buffer_in)){
       continue;
     }
   
-    /* Special options */
+    // Handle command
     if(buffer_in[0] == CMD_PREFIX){
       char *command = NULL;
       char *param   = NULL;
