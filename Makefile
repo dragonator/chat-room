@@ -1,13 +1,23 @@
 TARGET = chat_room
 SRCS   = chat_room.c
 
+CC = gcc
 FLAGS  = -Wall -Werror
 LIBS   = -lpthread
 
-all: $(TARGET)
+.PHONY: default
+default: $(TARGET)
 
-$(TARGET) : $(SRCS)
-	$(CC) $(FLAGS) $(SRCS) $(LIBS) -o $(TARGET)
+.PHONY: all
+all: default
 
+.PHONY: debug
+debug: DEBUG = -g
+debug: all
+
+.PHONY: clean
 clean:
 	$(RM) $(TARGET)
+
+$(TARGET) : $(SRCS)
+	$(CC) $(FLAGS) $(DEBUG) $(SRCS) $(LIBS) -o $(TARGET)
