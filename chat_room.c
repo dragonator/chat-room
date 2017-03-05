@@ -294,8 +294,5 @@ int main(){
     add_client_to_room(client);
     // TODO: Fork process instead of thread
     pthread_create(&thread_id, NULL, &handle_client, (void*)client);
-
-    /* Reduce CPU usage */
-    sleep(1);
   }
 }
