@@ -3,7 +3,7 @@ SRCS   = chat_room.c
 
 CC = gcc
 FLAGS  = -Wall -Werror
-LIBS   = -lpthread
+LIBS   =
 
 .PHONY: default
 default: $(TARGET)

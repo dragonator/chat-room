@@ -1,9 +1,9 @@
 #include <arpa/inet.h>
-#include <pthread.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/mman.h>
 #include <unistd.h>
 
 #define PORT                5002
@@ -27,8 +27,9 @@ typedef struct client_t {
   struct sockaddr_in addr;
 } client_t;
 
-static unsigned int clients_count = 0;
-client_t *clients[MAX_CLIENTS];
+// Shared resources
+unsigned int *clients_count = NULL;
+client_t     **clients      = NULL;
 static int uid = 1;
 
 // Add client to room
@@ -108,14 +109,13 @@ void strip_newline(char *s){
 //=================
 
 // Handle client communication
-void* handle_client(void *args){
+void* handle_client(client_t *client){
   char buffer_out[BUFFER_SIZE] = {0};
   char buffer_in[BUFFER_SIZE]  = {0};
   char address[INET6_ADDRSTRLEN] = {0};
   int  read_len = 0;
-  client_t *client = (client_t *)args;
 
-  clients_count++;
+  *clients_count = *clients_count + 1;
 
   // Alert for joining of client
   if(NULL != inet_ntop(AF_INET, &client->addr,
@@ -193,7 +193,7 @@ void* handle_client(void *args){
         } while(param != NULL);
         send_message_others(buffer_out, client->name);
       }else if(strcmp(command, CMD_LIST) == 0){
-        sprintf(buffer_out, "[INFO] Active clients: %d\n", clients_count);
+        sprintf(buffer_out, "[INFO] Active clients: %d\n", *clients_count);
         send_message_self(buffer_out, client->conn_fd);
         send_active_clients(client->conn_fd);
       }else if(strcmp(command, CMD_HELP) == 0){
@@ -212,6 +212,7 @@ void* handle_client(void *args){
   }
 
   /* Close connection */
+  shutdown(client->conn_fd, SHUT_RDWR);
   close(client->conn_fd);
   sprintf(buffer_out, "[SERVER] User %s left the room\n", client->name);
   send_message_all(buffer_out);
@@ -219,7 +220,7 @@ void* handle_client(void *args){
   // Remove client from room and end process
   remove_client_from_room(client->name);
   free(client);
-  clients_count--;
+  *clients_count = *clients_count - 1;
 
   // Alert for leaving of client
   if(NULL != inet_ntop(AF_INET, &client->addr,
@@ -229,23 +230,35 @@ void* handle_client(void *args){
     printf("[INFO] NAME : %s\n", client->name);
     printf("[INFO] IP   : %s\n", address);
   }
-
   else {
     perror("[ERROR] inet_ntop failed\n");
     // TODO
   }
-  pthread_detach(pthread_self());
-  
-  return NULL;
+
+  _exit(EXIT_SUCCESS);
 }
 
 int main(){
-  int  listen_fd = 0;
-  int  conn_fd   = 0;
-  char address[INET6_ADDRSTRLEN] = {0};
+  int    listen_fd = 0;
+  int    conn_fd   = 0;
+  pid_t  child     = 0;
+  char   address[INET6_ADDRSTRLEN] = {0};
+  size_t mem_size  = sizeof(clients_count) + sizeof(client_t)*MAX_CLIENTS;
   struct sockaddr_in serv_addr;
   struct sockaddr_in client_addr;
-  pthread_t thread_id;
+
+  // Map shared memory
+  clients_count = mmap((caddr_t)0, mem_size, PROT_READ | PROT_WRITE,
+                       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  if (clients_count == MAP_FAILED) {
+    perror("[ERROR] mmap failed");
+    exit(EXIT_FAILURE);
+  }
+  *clients_count = 0;
+  clients = (client_t **)(clients_count+sizeof(clients_count));
+  printf("[DEBUG] clients_count addr:%p\n", clients_count);
+  printf("[DEBUG] clients       addr:%p\n", clients);
+  
 
   // Set-up socket
   listen_fd                 = socket(AF_INET, SOCK_STREAM, 0);
@@ -256,13 +269,13 @@ int main(){
   // Assign addres to socket
   if(bind(listen_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0){
     perror("[ERROR] Binding failed");
-    return 1;
+    exit(EXIT_FAILURE);
   }
 
   // Allow incoming connections
   if(listen(listen_fd, 10) < 0){
     perror("[ERROR] Listening failed");
-    return 1;
+    exit(EXIT_FAILURE);
   }
 
   printf("[INFO] Server started successfully.\n");
@@ -273,7 +286,7 @@ int main(){
     conn_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
 
     // Check if max clients are connected
-    if((clients_count+1) == MAX_CLIENTS){
+    if((*clients_count+1) == MAX_CLIENTS){
       if(NULL != inet_ntop(AF_INET, &client_addr,
                            address, sizeof(address)))
       {
@@ -292,7 +305,13 @@ int main(){
 
     // Add client to the room and fork process
     add_client_to_room(client);
-    // TODO: Fork process instead of thread
-    pthread_create(&thread_id, NULL, &handle_client, (void*)client);
+
+    if (!(child = fork())) {
+      // Child process here
+      close(listen_fd);
+      handle_client(client);
+    }
+    printf("[INFO] Subprocess started with PID %d\n", child);
+    close(conn_fd);
   }
 }
