@@ -256,9 +256,6 @@ int main(){
   }
   *clients_count = 0;
   clients = (client_t **)(clients_count+sizeof(clients_count));
-  printf("[DEBUG] clients_count addr:%p\n", clients_count);
-  printf("[DEBUG] clients       addr:%p\n", clients);
-  
 
   // Set-up socket
   listen_fd                 = socket(AF_INET, SOCK_STREAM, 0);
