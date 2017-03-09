@@ -1,8 +1,10 @@
 #include <arpa/inet.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -10,6 +12,7 @@
 #define MAX_CLIENTS         100
 #define MAX_CLIENT_NAME_LEN 64
 #define BUFFER_SIZE         1024
+#define DAEMON_NAME         "Chat Room Server Daemon"
 
 // Commands
 #define CMD_PREFIX  '.'
@@ -31,6 +34,40 @@ typedef struct client_t {
 unsigned int *clients_count = NULL;
 client_t     **clients      = NULL;
 static int uid = 1;
+
+// Turn server into daemon
+void daemonize() {
+  pid_t process_id;
+  pid_t session_id;
+
+  // Fork the process
+  process_id = fork();
+  if (process_id < 0){
+    printf("Error occured during daemonizing. Exiting...\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // Exit from the parent process
+  if (process_id > 0)
+    exit(EXIT_SUCCESS);
+
+  // Change file permissions mask
+  umask(0);
+
+  // Create a new session id for the child process
+  session_id = setsid();
+  if (session_id < 0)
+    exit(EXIT_FAILURE);
+
+  // Make "root" the working directory
+  if ((chdir("/")) < 0)
+    exit(EXIT_FAILURE);
+
+  // Close all standard file descriptors
+  close(0);
+  close(1);
+  close(2);
+}
 
 // Add client to room
 void add_client_to_room(client_t *cl){
@@ -238,14 +275,31 @@ void* handle_client(client_t *client){
   _exit(EXIT_SUCCESS);
 }
 
-int main(){
+// Main
+int main(int argc, char *argv[]){
   int    listen_fd = 0;
   int    conn_fd   = 0;
+  int    option;
   pid_t  child     = 0;
   char   address[INET6_ADDRSTRLEN] = {0};
+  bool   should_daemonize = false;
   size_t mem_size  = sizeof(clients_count) + sizeof(client_t)*MAX_CLIENTS;
   struct sockaddr_in serv_addr;
   struct sockaddr_in client_addr;
+
+  // Process input arguments
+  while ((option = getopt(argc, argv, "d")) != -1) {
+    switch (option) {
+    case 'd': should_daemonize = true; break;
+    default:
+      fprintf(stderr, "Usage: %s [-d]\n", argv[0]);
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  // Daemonize if necessary
+  if (should_daemonize)
+    daemonize();
 
   // Map shared memory
   clients_count = mmap((caddr_t)0, mem_size, PROT_READ | PROT_WRITE,
