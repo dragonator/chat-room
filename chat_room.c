@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -8,7 +9,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#define PORT                5002
+#define DEFAULT_PORT        5000
 #define MAX_CLIENTS         100
 #define MAX_CLIENT_NAME_LEN 64
 #define BUFFER_SIZE         1024
@@ -279,7 +280,8 @@ void* handle_client(client_t *client){
 int main(int argc, char *argv[]){
   int    listen_fd = 0;
   int    conn_fd   = 0;
-  int    option;
+  int    option    = 0;
+  int    port      = DEFAULT_PORT;
   pid_t  child     = 0;
   char   address[INET6_ADDRSTRLEN] = {0};
   bool   should_daemonize = false;
@@ -288,11 +290,16 @@ int main(int argc, char *argv[]){
   struct sockaddr_in client_addr;
 
   // Process input arguments
-  while ((option = getopt(argc, argv, "d")) != -1) {
+  while ((option = getopt(argc, argv, "dp:")) != -1) {
     switch (option) {
     case 'd': should_daemonize = true; break;
+    case 'p': port = atoi(optarg);     break;
+    case '?':
+      if      (optopt == 'p')   { fprintf (stderr, "Option -%c requires an argument.\n", optopt) ;}
+      else if (isprint(optopt)) { fprintf (stderr, "Unknown option `-%c'.\n", optopt);}
+      else                      { fprintf (stderr, "Unknown option character `\\x%x'.\n", optopt);}
     default:
-      fprintf(stderr, "Usage: %s [-d]\n", argv[0]);
+      fprintf(stderr, "Usage: %s [-d] [-p PORT]\n", argv[0]);
       exit(EXIT_FAILURE);
     }
   }
@@ -315,7 +322,7 @@ int main(int argc, char *argv[]){
   listen_fd                 = socket(AF_INET, SOCK_STREAM, 0);
   serv_addr.sin_family      = AF_INET;
   serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  serv_addr.sin_port        = htons(PORT); 
+  serv_addr.sin_port        = htons(port); 
 
   // Assign addres to socket
   if(bind(listen_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0){
@@ -329,7 +336,7 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
-  printf("[INFO] Server started successfully.\n");
+  printf("[INFO] Server is started successfully on port %d\n", port);
 
   // Accept clients
   while(1){
