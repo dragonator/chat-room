@@ -1,5 +1,6 @@
-TARGET = chat_room
-SRCS   = chat_room.c
+TARGET  = chat_room
+SRCS    = chat_room.c client_handler.c messages.c
+HEADERS = shared.h    client_handler.h messages.h
 
 CC = gcc
 FLAGS  = -Wall -Werror
