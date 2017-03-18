@@ -5,7 +5,7 @@
 #include <string.h>
 
 // Send message to all clients but the sender
-void send_message_others(char *message, char *name);
+void send_message_others(char *message, int conn_fd);
 
 // Send message to all clients
 void send_message_all(char *message);

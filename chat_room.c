@@ -22,7 +22,7 @@
 static int uid = 1;
 
 // Turn server into daemon
-void daemonize() {
+void daemonize(){
   pid_t process_id;
   pid_t session_id;
 
@@ -65,22 +65,86 @@ void *get_address(struct sockaddr *sa){
     return NULL;
 }
 
+// Allocate shared memory
+void* alloc_shared_memory(size_t size){
+  void *result = mmap((caddr_t)0, size, PROT_READ | PROT_WRITE,
+                       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+  if (result == MAP_FAILED) {
+    perror("[ERROR] mmap failed");
+    exit(EXIT_FAILURE);
+  }
+
+  return result;
+}
+
+// Assign address to socket
+void bind_to_address(char *port, int *listen_fd){
+  int    yes       = 1;
+  int    gai_err   = 0;
+  struct addrinfo  hints;
+  struct addrinfo *server_info;
+  struct addrinfo *sip;
+
+  // Get all TCP/IP addresses
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family   = AF_INET6;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_PASSIVE;
+  if((gai_err = getaddrinfo(NULL, port, &hints, &server_info)) != 0) {
+    fprintf(stderr, "[ERROR] getaddrinfo: %s\n", gai_strerror(gai_err));
+    exit(EXIT_FAILURE);
+  }
+
+  // Assign address to socket;
+  // bind to the first we can
+  for(sip = server_info; sip != NULL; sip = sip->ai_next) {
+    // Set-up socket
+    *listen_fd = socket(sip->ai_family, sip->ai_socktype, 0);
+    if(*listen_fd == -1) {
+      perror("[ERROR] Socket creation failed");
+      continue;
+    }
+
+    if(setsockopt(*listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+      perror("[ERROR] Setting up socket failed");
+      continue;
+    }
+
+    // Bind to address
+    if(bind(*listen_fd, sip->ai_addr, sip->ai_addrlen) == -1){
+      perror("[ERROR] Binding failed");
+      continue;
+    }
+
+    // Allow incoming connections
+    if(listen(*listen_fd, 10) == -1){
+      perror("[ERROR] Listening failed");
+      exit(EXIT_FAILURE);
+    }
+
+    break;
+  }
+
+  freeaddrinfo(server_info);
+
+  if (sip == NULL)  {
+    fprintf(stderr, "[ERROR] Binding failed\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
 // Main
 int main(int argc, char *argv[]){
-  int    listen_fd = 0;
-  int    conn_fd   = 0;
-  int    option    = 0;
-  int    gai_err   = 0;
-  int    yes       = 1;
-  pid_t  child     = 0;
-  char   address[INET6_ADDRSTRLEN] = {0};
-  char  *port      = DEFAULT_PORT;
+  int    listen_fd   = 0;
+  int    conn_fd     = 0;
+  int    option      = 0;
+  pid_t  child       = 0;
+  char  *port        = DEFAULT_PORT;
   bool   should_daemonize = false;
+  char   address[INET6_ADDRSTRLEN]     = {0};
+  char   username[MAX_CLIENT_NAME_LEN] = {0};
   size_t mem_size  = sizeof(clients_count) + sizeof(client_t)*MAX_CLIENTS;
   struct sockaddr_storage client_addr;
-  struct addrinfo         hints;
-  struct addrinfo        *server_info;
-  struct addrinfo        *sip;
 
   // Process input arguments
   while ((option = getopt(argc, argv, "dp:")) != -1) {
@@ -88,9 +152,9 @@ int main(int argc, char *argv[]){
     case 'd': should_daemonize = true; break;
     case 'p': port = optarg; break;
     case '?':
-      if      (optopt == 'p')   { fprintf (stderr, "Option -%c requires an argument.\n", optopt) ;}
-      else if (isprint(optopt)) { fprintf (stderr, "Unknown option `-%c'.\n", optopt);}
-      else                      { fprintf (stderr, "Unknown option character `\\x%x'.\n", optopt);}
+      if      (optopt == 'p')   fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+      else if (isprint(optopt)) fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+      else                      fprintf(stderr, "Unknown option character `\\x%x'.\n", optopt);
     default:
       fprintf(stderr, "Usage: %s [-d] [-p PORT]\n", argv[0]);
       exit(EXIT_FAILURE);
@@ -102,62 +166,13 @@ int main(int argc, char *argv[]){
     daemonize();
 
   // Map shared memory
-  clients_count = mmap((caddr_t)0, mem_size, PROT_READ | PROT_WRITE,
-                       MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-  if (clients_count == MAP_FAILED) {
-    perror("[ERROR] mmap failed");
-    exit(EXIT_FAILURE);
-  }
+  clients_count = alloc_shared_memory(mem_size);
   *clients_count = 0;
-  clients = (client_t **)(clients_count+sizeof(clients_count));
+  clients = (client_t *)(clients_count+sizeof(clients_count));
 
-  // Get all TCP/IP addresses
-  memset(&hints, 0, sizeof(hints));
-  hints.ai_family   = AF_INET6;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = AI_PASSIVE;
-  if((gai_err = getaddrinfo(NULL, port, &hints, &server_info)) != 0) {
-    fprintf(stderr, "[ERROR] getaddrinfo: %s\n", gai_strerror(gai_err));
-    return 1;
-  }
-
-  // Assign address to socket;
-  // bind to the first we can
-  for(sip = server_info; sip != NULL; sip = sip->ai_next) {
-    // Set-up socket
-    listen_fd = socket(sip->ai_family, sip->ai_socktype, 0);
-    if(listen_fd == -1) {
-      perror("[ERROR] Socket creation failed");
-      continue;
-    }
-
-    if(setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
-      perror("[ERROR] Setting up socket failed");
-      exit(EXIT_FAILURE);
-    }
-
-    // Bind to address
-    if(bind(listen_fd, sip->ai_addr, sip->ai_addrlen) == -1){
-      perror("[ERROR] Binding failed");
-      continue;
-    }
-
-    // Allow incoming connections
-    if(listen(listen_fd, 10) == -1){
-      perror("[ERROR] Listening failed");
-      exit(EXIT_FAILURE);
-    }
-
-    break;
-  }
-
-  freeaddrinfo(server_info);
-  if (sip == NULL)  {
-    fprintf(stderr, "[ERROR] Binding failed\n");
-    exit(EXIT_FAILURE);
-  }
+  // Assign address to socket
+  bind_to_address(port, &listen_fd);
   printf("[INFO] Server is started successfully on port %s\n", port);
-  printf("[INFO] Protocol in use:  TCP/%s\n", (sip->ai_family == AF_INET ? "IPv4" : "IPv6"));
 
   // Accept clients
   while(1){
@@ -169,7 +184,7 @@ int main(int argc, char *argv[]){
     }
 
     // Convert network address to string
-    if(NULL == inet_ntop(client_addr.ss_family, 
+    if(NULL == inet_ntop(client_addr.ss_family,
                          get_address((struct sockaddr *)&client_addr),
                          address, sizeof(address)))
     {
@@ -187,22 +202,20 @@ int main(int argc, char *argv[]){
       continue;
     }
 
-    // Configure client
-    client_t *client = (client_t *)malloc(sizeof(client_t));
-    client->saddr = (struct sockaddr *)&client_addr;
-    client->conn_fd = conn_fd;
-    sprintf(client->name, "%d", uid++);
-    strcpy(client->ip_address, address);
-
-    // Add client to the room and fork process
-    add_client_to_room(client);
+    sprintf(username, "%d", uid++);
+    client_t *client = register_client(username, address, conn_fd);
 
     if (!(child = fork())) {
       // Child process here
       close(listen_fd);
       handle_client(client);
+
+      /* Close connection */
+      shutdown(conn_fd, SHUT_RDWR);
+      close(conn_fd);
+
+      _exit(EXIT_SUCCESS);
     }
     printf("[INFO] Subprocess started with PID %d\n", child);
-    close(conn_fd);
   }
 }

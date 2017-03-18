@@ -2,8 +2,6 @@
 #define __CLIENT_HANDLER_H__
 
 // Macro definitions
-#define MAX_CLIENTS         100
-#define MAX_CLIENT_NAME_LEN 64
 #define BUFFER_SIZE         1024
 
 // Custom includes
@@ -19,15 +17,17 @@
 #define CMD_LIST    ".list"
 
 // Add client to room
-void add_client_to_room(client_t *cl);
+client_t* register_client(char *name, char *ip_address, int conn_fd);
 
 // Remove client from room
-void remove_client_from_room(char *name);
+void remove_client(char *name);
 
 // List all active clients
 void send_active_clients(int conn_fd);
 
 // Handle client communication
-void* handle_client(client_t *client);
+void handle_client(client_t *client);
 
+// Get pointer to free slot from shrared memory
+client_t* get_free_slot();
 #endif
