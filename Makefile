@@ -1,6 +1,6 @@
 TARGET  = chat_room
-SRCS    = chat_room.c client_handler.c messages.c
-HEADERS = shared.h    client_handler.h messages.h
+SRCS    = chat_room.c client_handler.c messages.c file_descriptors.c libancillary.a
+HEADERS = shared.h    client_handler.h messages.h file_descriptors.h ancillary.h
 
 CC = gcc
 FLAGS  = -Wall -Werror

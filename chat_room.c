@@ -1,6 +1,7 @@
 // System includes
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <fcntl.h>
 #include <netdb.h>
 #include <string.h>
 #include <stdbool.h>
@@ -9,17 +10,20 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 // Custom includes
+#include "ancillary.h"
 #include "client_handler.h"
+#include "file_descriptors.h"
 #include "shared.h"
 
 // Macro definitions
 #define DEFAULT_PORT        "5000"
 #define DAEMON_NAME         "Chat Room Server Daemon"
 
-static int uid = 1;
+//static int uid = 1;
 
 // Turn server into daemon
 void daemonize(){
@@ -70,7 +74,8 @@ void* alloc_shared_memory(size_t size){
   void *result = mmap((caddr_t)0, size, PROT_READ | PROT_WRITE,
                        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
   if (result == MAP_FAILED) {
-    perror("[ERROR] mmap failed");
+    printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+    perror("[ERROR] mmap() failed");
     exit(EXIT_FAILURE);
   }
 
@@ -91,7 +96,8 @@ void bind_to_address(char *port, int *listen_fd){
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
   if((gai_err = getaddrinfo(NULL, port, &hints, &server_info)) != 0) {
-    fprintf(stderr, "[ERROR] getaddrinfo: %s\n", gai_strerror(gai_err));
+    printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+    printf("[ERROR] getaddrinfo() failed: %s\n", gai_strerror(gai_err));
     exit(EXIT_FAILURE);
   }
 
@@ -101,23 +107,27 @@ void bind_to_address(char *port, int *listen_fd){
     // Set-up socket
     *listen_fd = socket(sip->ai_family, sip->ai_socktype, 0);
     if(*listen_fd == -1) {
+      printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
       perror("[ERROR] Socket creation failed");
       continue;
     }
 
     if(setsockopt(*listen_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+      printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
       perror("[ERROR] Setting up socket failed");
       continue;
     }
 
     // Bind to address
     if(bind(*listen_fd, sip->ai_addr, sip->ai_addrlen) == -1){
+      printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
       perror("[ERROR] Binding failed");
       continue;
     }
 
     // Allow incoming connections
     if(listen(*listen_fd, 10) == -1){
+      printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
       perror("[ERROR] Listening failed");
       exit(EXIT_FAILURE);
     }
@@ -128,18 +138,44 @@ void bind_to_address(char *port, int *listen_fd){
   freeaddrinfo(server_info);
 
   if (sip == NULL)  {
-    fprintf(stderr, "[ERROR] Binding failed\n");
+    printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+    printf("[ERROR] Binding failed\n");
     exit(EXIT_FAILURE);
   }
+}
+
+// Verify username
+bool is_valid(char *username, int username_len){
+  for(int i=0; (i<username_len-1) && (username[i] != '\0') ;i++){
+    if(!isalpha(username[i]) && !isdigit(username[i]) && (username[i] != '_')){
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool is_name_available(char *username){
+  for(int i=0 ; i<MAX_CLIENTS ; i++){
+    if(clients[i].active && (strcmp(clients[i].name, username) == 0)){
+        return false;
+    }
+  }
+
+  return true;
 }
 
 // Main
 int main(int argc, char *argv[]){
   int    listen_fd   = 0;
   int    conn_fd     = 0;
+  int    worker_fd   = 0;
+  int    worker_socket   = 0;
   int    option      = 0;
   pid_t  child       = 0;
   char  *port        = DEFAULT_PORT;
+  //char  *username;
+  ssize_t username_len = 0;
   bool   should_daemonize = false;
   char   address[INET6_ADDRSTRLEN]     = {0};
   char   username[MAX_CLIENT_NAME_LEN] = {0};
@@ -174,12 +210,52 @@ int main(int argc, char *argv[]){
   bind_to_address(port, &listen_fd);
   printf("[INFO] Server is started successfully on port %s\n", port);
 
+  // Create UNIX domain socket
+  worker_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+  struct sockaddr_un addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sun_family = AF_UNIX;
+  strncpy(addr.sun_path, "server-worker-socket", sizeof(addr.sun_path)-1);
+
+  // Bind to address
+  unlink("server-worker-socket");
+  if(bind(worker_socket, (struct sockaddr*)&addr, sizeof(addr)) == -1){
+    printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+    perror("[ERROR] bind() failed");
+    exit(EXIT_FAILURE);
+  }
+
+  // Allow incoming connections
+  if(listen(worker_socket, 1) == -1){
+    printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+    perror("[ERROR] Listening failed");
+    exit(EXIT_FAILURE);
+  }
+
+  // Start worker
+  if (!(child = fork())) {
+    // Worker process here
+    close(worker_socket);
+    handle_clients();
+
+    exit(EXIT_FAILURE);
+  }
+  printf("[INFO] Worker process started with PID %d\n", child);
+
+  // Accept connection from worker
+  worker_fd = accept(worker_socket, 0, 0);
+  if (worker_fd == -1){
+    printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+    perror("[ERROR] accept() failed");
+  }
+
   // Accept clients
   while(1){
     socklen_t client_len = sizeof(client_addr);
     conn_fd = accept(listen_fd, (struct sockaddr*)&client_addr, &client_len);
     if (conn_fd == -1) {
-      perror("[ERROR] Accept failed");
+      printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+      perror("[ERROR] accept() failed");
       continue;
     }
 
@@ -188,13 +264,15 @@ int main(int argc, char *argv[]){
                          get_address((struct sockaddr *)&client_addr),
                          address, sizeof(address)))
     {
-      perror("[ERROR] Converting network address failed");
+      printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
+      perror("Converting network address failed");
       continue;
     }
 
     // Check if max clients are connected
     if((*clients_count+1) == MAX_CLIENTS){
       {
+        printf("[ERROR in %s near line %d]\n", __FILE__, __LINE__);
         printf("[ERROR] Max clients reached\n");
         printf("[ERROR] Reject connection from %s\n", address);
       }
@@ -202,20 +280,40 @@ int main(int argc, char *argv[]){
       continue;
     }
 
-    sprintf(username, "%d", uid++);
-    client_t *client = register_client(username, address, conn_fd);
+    client_t *client = get_free_slot();
+    // Pick username
+    while(1) {
+      write(conn_fd, "<SERVER> Pick username: \n", 25);
+      if((username_len = recv(conn_fd, username, MAX_CLIENT_NAME_LEN, 0)) == 0){
+          username[0] = '\0';
+          break;
+      }
+      
+      strip_newline(username);
+      
+      if(!is_valid(username, username_len)){
+        write(conn_fd, "<SERVER> Invalid username.Try again.\n", 37);
+        continue;
+      }
 
-    if (!(child = fork())) {
-      // Child process here
-      close(listen_fd);
-      handle_client(client);
+      if(!is_name_available(username)){
+        write(conn_fd, "<SERVER> Username is taken.Try again.\n", 37);
+        continue;
+      }
 
-      /* Close connection */
-      shutdown(conn_fd, SHUT_RDWR);
-      close(conn_fd);
+      break;
+    };
+    
+    if(!username_len)
+      continue;
 
-      _exit(EXIT_SUCCESS);
-    }
-    printf("[INFO] Subprocess started with PID %d\n", child);
+    //sprintf(client->name, "%d", uid++);
+    strcpy(client->name, username);
+    strcpy(client->ip_address, address);
+    printf("[INFO] Sending fd to worker: %d\n", conn_fd);
+    ancil_send_fd(worker_fd, conn_fd);
   }
+
+  close(worker_fd);
+  close(listen_fd);
 }

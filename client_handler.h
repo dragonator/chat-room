@@ -20,14 +20,20 @@
 client_t* register_client(char *name, char *ip_address, int conn_fd);
 
 // Remove client from room
-void remove_client(char *name);
+void remove_client(int conn_fd);
 
 // List all active clients
 void send_active_clients(int conn_fd);
 
 // Handle client communication
-void handle_client(client_t *client);
+void handle_clients();
+
+// Get pending client
+client_t* get_pending_client();
 
 // Get pointer to free slot from shrared memory
 client_t* get_free_slot();
+
+// Terminates string on newline character
+void strip_newline(char *s);
 #endif
