@@ -19,6 +19,10 @@ debug: all
 .PHONY: clean
 clean:
 	$(RM) $(TARGET)
+	cd libancillary && make clean
 
 $(TARGET) : $(SRCS)
 	$(CC) $(FLAGS) $(DEBUG) $(SRCS) $(LIBS) -o $(TARGET)
+
+libancillary.a:
+	cd libancillary && make
